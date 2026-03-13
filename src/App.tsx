@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Play, ExternalLink, Youtube, X, Calendar, Eye, Loader2, Search } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { Play, ExternalLink, Youtube, X, Calendar, Loader2, Search } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface Video {
   id: string;
@@ -21,6 +21,55 @@ interface ChannelInfo {
   icon: string;
 }
 
+const parseISO8601Duration = (duration: string) => {
+  const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!match) return '0:00';
+  const hours = parseInt(match[1] || '0');
+  const minutes = parseInt(match[2] || '0');
+  const seconds = parseInt(match[3] || '0');
+  
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+  }
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+};
+
+const detectLanguage = (title: string, description?: string) => {
+  const text = (title + ' ' + (description || '')).toLowerCase();
+  if (/[\u0900-\u097F]/.test(text)) return 'Hindi';
+  
+  const hindiKeywords = ['hindi', 'bollywood', 't-series', 'gaana', 'arijit', 'neha kakkar', 'jubin', 'shreya'];
+  if (hindiKeywords.some(kw => text.includes(kw))) return 'Hindi';
+
+  return 'English';
+};
+
+const getFullLanguageName = (langCode: string | undefined) => {
+  if (!langCode) return '';
+  try {
+    const baseLang = langCode.split('-')[0];
+    const displayNames = new Intl.DisplayNames(['en'], { type: 'language' });
+    return displayNames.of(baseLang) || langCode.toUpperCase();
+  } catch (e) {
+    return langCode.toUpperCase();
+  }
+};
+
+const extractCategory = (title: string) => {
+  const lowerTitle = title.toLowerCase();
+  if (
+    lowerTitle.includes('fortnite') || 
+    lowerTitle.includes('gaming') || 
+    lowerTitle.includes('gameplay') ||
+    lowerTitle.includes('xbox') ||
+    lowerTitle.includes('ps5') ||
+    lowerTitle.includes('nintendo')
+  ) {
+    return 'Gaming';
+  }
+  return 'Music';
+};
+
 export default function App() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [channel, setChannel] = useState<ChannelInfo | null>(null);
@@ -34,24 +83,48 @@ export default function App() {
 
   useEffect(() => {
     fetchVideos();
-    
-    // Poll for updates every 30 seconds to get descriptions as they load in the background
-    const interval = setInterval(fetchVideos, 30000);
-    return () => clearInterval(interval);
   }, []);
 
   const fetchVideos = async () => {
+    const API_KEY = 'AIzaSyAnXKQCLkIikN4sELa4gr1VmadGh6U_2Dw';
+    const PLAYLIST_ID = 'UUy8CUVT0ZUc18zRr3CzokEw';
+
     try {
-      const res = await fetch('/api/videos');
-      if (!res.ok) throw new Error('Failed to fetch videos');
-      const data = await res.json();
-      setVideos(data.videos);
-      setChannel(data.channel);
-      setError('');
-    } catch (err) {
-      if (videos.length === 0) {
-        setError('Could not load videos. Please try again later.');
+      const playlistUrl = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=${PLAYLIST_ID}&maxResults=50&key=${API_KEY}`;
+      const playlistRes = await fetch(playlistUrl);
+      const playlistData = await playlistRes.json();
+
+      if (!playlistData.items || playlistData.items.length === 0) {
+        throw new Error('No videos found');
       }
+
+      const videoIds = playlistData.items.map((item: any) => item.contentDetails.videoId).join(',');
+
+      const detailsUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${videoIds}&key=${API_KEY}`;
+      const detailsRes = await fetch(detailsUrl);
+      const detailsData = await detailsRes.json();
+
+      const formattedVideos = detailsData.items.map((item: any) => ({
+        id: item.id,
+        title: item.snippet.title,
+        description: item.snippet.description,
+        thumbnail: item.snippet.thumbnails.maxres?.url || item.snippet.thumbnails.high?.url || item.snippet.thumbnails.default?.url,
+        url: `https://www.youtube.com/watch?v=${item.id}`,
+        duration: parseISO8601Duration(item.contentDetails.duration),
+        views: item.statistics.viewCount,
+        uploadedAt: item.snippet.publishedAt,
+        category: item.snippet.categoryId === '20' ? 'Gaming' : (item.snippet.categoryId === '10' ? 'Music' : extractCategory(item.snippet.title)),
+        language: getFullLanguageName(item.snippet.defaultAudioLanguage || item.snippet.defaultLanguage) || detectLanguage(item.snippet.title, item.snippet.description)
+      }));
+
+      setVideos(formattedVideos);
+      setChannel({
+        name: 'Entertain-Tangle Official',
+        url: 'https://youtube.com/@Entertain-Tangle-Official',
+        icon: 'https://yt3.ggpht.com/vIiJwdgg5qihPh8BAYPxFwwqNeBEEVCj7gV_eVPcKBYbG3zta3_5HXZGzdAuzdIyET7GXtvB=s176-c-k-c0x00ffffff-no-rj-mo'
+      });
+    } catch (err) {
+      setError('Failed to load videos from YouTube.');
     } finally {
       setLoading(false);
     }
@@ -90,7 +163,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-50 font-sans selection:bg-red-500/30">
-      {/* Header */}
       <header className="sticky top-0 z-10 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-800 p-4">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -121,7 +193,6 @@ export default function App() {
           </div>
         </div>
         
-        {/* Filters */}
         <div className="max-w-7xl mx-auto mt-4 flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3 overflow-x-auto pb-1 scrollbar-hide flex-1">
@@ -172,12 +243,10 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {loading && videos.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 gap-4">
             <Loader2 className="w-8 h-8 text-red-500 animate-spin" />
-            <p className="text-zinc-400">Loading latest videos...</p>
           </div>
         ) : error && videos.length === 0 ? (
           <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-6 text-center">
@@ -249,7 +318,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Video Modal */}
       <AnimatePresence>
         {selectedVideo && (
           <motion.div 
@@ -330,17 +398,12 @@ export default function App() {
                   </div>
                 </div>
                 
-                {selectedVideo.description ? (
+                {selectedVideo.description && (
                   <div className="bg-zinc-800/30 rounded-xl p-4 border border-zinc-800/50">
                     <h3 className="text-sm font-semibold text-zinc-300 mb-2">Description</h3>
                     <p className="text-sm text-zinc-400 whitespace-pre-wrap leading-relaxed">
                       {selectedVideo.description}
                     </p>
-                  </div>
-                ) : (
-                  <div className="bg-zinc-800/30 rounded-xl p-4 border border-zinc-800/50 flex items-center gap-2 text-zinc-500 text-sm">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Loading description...
                   </div>
                 )}
               </div>
