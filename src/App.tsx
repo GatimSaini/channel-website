@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Play, ExternalLink, Youtube, X, Calendar, Loader2, Search } from 'lucide-react';
+import { Play, ExternalLink, Youtube, X, Calendar, Loader2, Search, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface Video {
@@ -46,6 +46,7 @@ const detectLanguage = (title: string, description?: string) => {
 
 const getFullLanguageName = (langCode: string | undefined) => {
   if (!langCode) return '';
+  if (langCode.toLowerCase() === 'zxx') return 'No linguistic content';
   try {
     const baseLang = langCode.split('-')[0];
     const displayNames = new Intl.DisplayNames(['en'], { type: 'language' });
@@ -90,32 +91,54 @@ export default function App() {
     const PLAYLIST_ID = 'UUy8CUVT0ZUc18zRr3CzokEw';
 
     try {
-      const playlistUrl = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=${PLAYLIST_ID}&maxResults=50&key=${API_KEY}`;
-      const playlistRes = await fetch(playlistUrl);
-      const playlistData = await playlistRes.json();
+      let allItems: any[] = [];
+      let nextPageToken = '';
+      let pageCount = 0;
 
-      if (!playlistData.items || playlistData.items.length === 0) {
+      do {
+        const pageTokenParam = nextPageToken ? `&pageToken=${nextPageToken}` : '';
+        const playlistUrl = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=${PLAYLIST_ID}&maxResults=50${pageTokenParam}&key=${API_KEY}`;
+        const playlistRes = await fetch(playlistUrl);
+        const playlistData = await playlistRes.json();
+
+        if (playlistData.items) {
+          allItems = [...allItems, ...playlistData.items];
+        }
+        
+        nextPageToken = playlistData.nextPageToken;
+        pageCount++;
+      } while (nextPageToken && pageCount < 10);
+
+      if (allItems.length === 0) {
         throw new Error('No videos found');
       }
 
-      const videoIds = playlistData.items.map((item: any) => item.contentDetails.videoId).join(',');
+      const formattedVideos: Video[] = [];
 
-      const detailsUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${videoIds}&key=${API_KEY}`;
-      const detailsRes = await fetch(detailsUrl);
-      const detailsData = await detailsRes.json();
+      for (let i = 0; i < allItems.length; i += 50) {
+        const batch = allItems.slice(i, i + 50);
+        const videoIds = batch.map((item: any) => item.contentDetails.videoId).join(',');
 
-      const formattedVideos = detailsData.items.map((item: any) => ({
-        id: item.id,
-        title: item.snippet.title,
-        description: item.snippet.description,
-        thumbnail: item.snippet.thumbnails.maxres?.url || item.snippet.thumbnails.high?.url || item.snippet.thumbnails.default?.url,
-        url: `https://www.youtube.com/watch?v=${item.id}`,
-        duration: parseISO8601Duration(item.contentDetails.duration),
-        views: item.statistics.viewCount,
-        uploadedAt: item.snippet.publishedAt,
-        category: item.snippet.categoryId === '20' ? 'Gaming' : (item.snippet.categoryId === '10' ? 'Music' : extractCategory(item.snippet.title)),
-        language: getFullLanguageName(item.snippet.defaultAudioLanguage || item.snippet.defaultLanguage) || detectLanguage(item.snippet.title, item.snippet.description)
-      }));
+        const detailsUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${videoIds}&key=${API_KEY}`;
+        const detailsRes = await fetch(detailsUrl);
+        const detailsData = await detailsRes.json();
+
+        if (detailsData.items) {
+          const batchVideos = detailsData.items.map((item: any) => ({
+            id: item.id,
+            title: item.snippet.title,
+            description: item.snippet.description,
+            thumbnail: item.snippet.thumbnails.maxres?.url || item.snippet.thumbnails.high?.url || item.snippet.thumbnails.default?.url,
+            url: `https://www.youtube.com/watch?v=${item.id}`,
+            duration: parseISO8601Duration(item.contentDetails.duration),
+            views: item.statistics.viewCount,
+            uploadedAt: item.snippet.publishedAt,
+            category: item.snippet.categoryId === '20' ? 'Gaming' : (item.snippet.categoryId === '10' ? 'Music' : extractCategory(item.snippet.title)),
+            language: getFullLanguageName(item.snippet.defaultAudioLanguage || item.snippet.defaultLanguage) || detectLanguage(item.snippet.title, item.snippet.description)
+          }));
+          formattedVideos.push(...batchVideos);
+        }
+      }
 
       setVideos(formattedVideos);
       setChannel({
@@ -160,6 +183,14 @@ export default function App() {
       return matchesCategory && matchesLanguage && matchesSearch;
     });
   }, [videos, searchQuery, selectedCategory, selectedLanguage]);
+
+  const hasActiveFilters = searchQuery !== '' || selectedCategory !== 'All' || selectedLanguage !== 'All';
+
+  const resetFilters = () => {
+    setSearchQuery('');
+    setSelectedCategory('All');
+    setSelectedLanguage('All');
+  };
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-50 font-sans selection:bg-red-500/30">
@@ -213,32 +244,56 @@ export default function App() {
                 ))}
               </div>
             </div>
-            <div className="hidden md:block text-xs font-medium text-zinc-500 bg-zinc-900 px-3 py-1.5 rounded-full border border-zinc-800">
-              Showing <span className="text-zinc-100">{filteredVideos.length}</span> videos
+            <div className="hidden md:flex items-center gap-3">
+              {hasActiveFilters && (
+                <button
+                  onClick={resetFilters}
+                  className="flex items-center gap-1.5 text-xs font-medium text-red-400 hover:text-red-300 transition-colors bg-red-500/10 hover:bg-red-500/20 px-3 py-1.5 rounded-full"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Reset
+                </button>
+              )}
+              <div className="text-xs font-medium text-zinc-500 bg-zinc-900 px-3 py-1.5 rounded-full border border-zinc-800">
+                Showing <span className="text-zinc-100">{filteredVideos.length}</span> videos
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-3 overflow-x-auto pb-1 scrollbar-hide">
-            <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider shrink-0">Language:</span>
-            <div className="flex gap-2">
-              {languages.map(lang => (
-                <button
-                  key={lang}
-                  onClick={() => setSelectedLanguage(lang)}
-                  className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
-                    selectedLanguage === lang 
-                      ? 'bg-red-500 text-white' 
-                      : 'bg-zinc-900 text-zinc-300 hover:bg-zinc-800'
-                  }`}
-                >
-                  {lang}
-                </button>
-              ))}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 overflow-x-auto pb-1 scrollbar-hide flex-1">
+              <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider shrink-0">Language:</span>
+              <div className="flex gap-2">
+                {languages.map(lang => (
+                  <button
+                    key={lang}
+                    onClick={() => setSelectedLanguage(lang)}
+                    className={`px-4 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors ${
+                      selectedLanguage === lang 
+                        ? 'bg-red-500 text-white' 
+                        : 'bg-zinc-900 text-zinc-300 hover:bg-zinc-800'
+                    }`}
+                  >
+                    {lang}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
           
-          <div className="md:hidden text-center text-xs font-medium text-zinc-500">
-            Showing <span className="text-zinc-100">{filteredVideos.length}</span> videos
+          <div className="md:hidden flex items-center justify-between mt-2">
+            {hasActiveFilters ? (
+              <button
+                onClick={resetFilters}
+                className="flex items-center gap-1.5 text-xs font-medium text-red-400 hover:text-red-300 transition-colors bg-red-500/10 px-3 py-1.5 rounded-full"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Reset Filters
+              </button>
+            ) : <div />}
+            <div className="text-xs font-medium text-zinc-500">
+              Showing <span className="text-zinc-100">{filteredVideos.length}</span> videos
+            </div>
           </div>
         </div>
       </header>
@@ -262,10 +317,10 @@ export default function App() {
           <div className="text-center py-20">
             <p className="text-xl text-zinc-400">No videos found matching your criteria.</p>
             <button 
-              onClick={() => { setSearchQuery(''); setSelectedCategory('All'); setSelectedLanguage('All'); }}
+              onClick={resetFilters}
               className="mt-4 text-red-500 hover:underline"
             >
-              Clear filters
+              Reset filters
             </button>
           </div>
         ) : (
